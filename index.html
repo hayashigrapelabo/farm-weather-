@@ -1511,6 +1511,16 @@ function deleteRecord(recId) {
   renderLog();
 }
 
+function deleteRecordByIndex(idx) {
+  const r = CURRENT_LOG_LIST[idx];
+  if (!r) return;
+  if (r.id && localIds && localIds.has(r.id)) {
+    deleteRecord(r.id);
+  } else {
+    alert('この記録はGoogleスプレッドシートから直接追加されたため、アプリから削除できません。\nシートから削除してください。');
+  }
+}
+
 function closeFormIfBg(e) {
   if(e.target===document.getElementById('recFormOverlay'))
     document.getElementById('recFormOverlay').classList.remove('open');
@@ -1958,7 +1968,7 @@ function renderLog() {
       <div class="rec-body">
         <div style="display:flex;gap:.4rem;margin-bottom:.55rem;">
           <button class="rec-edit-btn" onclick="event.stopPropagation();editRecordByIndex(${index})">✏️ 編集</button>
-          ${localIds.has(r.id) ? `<button class="rec-del-btn" onclick="event.stopPropagation();deleteRecord(${r.id})">🗑️ 削除</button>` : ''}
+          <button class="rec-del-btn" onclick="event.stopPropagation();deleteRecordByIndex(${index})">🗑️ 削除</button>
         </div>
         ${housesHtml}
       </div>
