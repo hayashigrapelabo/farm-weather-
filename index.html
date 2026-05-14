@@ -1514,7 +1514,7 @@ function deleteRecord(recId) {
 function deleteRecordByIndex(idx) {
   const r = CURRENT_LOG_LIST[idx];
   if (!r) return;
-  if (r.id && localIds && localIds.has(r.id)) {
+  if (r.id && LOCAL_IDS.has(r.id)) {
     deleteRecord(r.id);
   } else {
     alert('この記録はGoogleスプレッドシートから直接追加されたため、アプリから削除できません。\nシートから削除してください。');
@@ -1824,6 +1824,7 @@ const SHEET_ID  = '13XoTk1MvPV8IxowC0J81Ao4YlQkhJ4HGWnguiXWS1ns';
 const FORM_URL  = ''; // Googleフォームが届いたらここに入れる
 let   LOG_ROWS  = []; // 全レコード
 let   CURRENT_LOG_LIST = []; // 表示中リスト（index参照用）
+let   LOCAL_IDS = new Set();  // ローカル保存済みIDセット（グローバル）
 let   LOG_FILTER= 'all';
 
 // Googleシートからデータ読み込み
@@ -1898,7 +1899,8 @@ function renderLog() {
 
   // 全リストを保存（index参照用）
   CURRENT_LOG_LIST = list;
-  const localIds = new Set(JSON.parse(localStorage.getItem('farm_work_log')||'[]').map(r=>r.id));
+  LOCAL_IDS = new Set(JSON.parse(localStorage.getItem('farm_work_log')||'[]').map(r=>r.id));
+  const localIds = LOCAL_IDS;
 
   document.getElementById('recList').innerHTML = list.map((r, index) => {
     const isDone = r.status?.includes('完了');
@@ -2089,54 +2091,78 @@ function jmaCodeToEmoji(code) {
 
 async function loadWeeklyForecast() {
   try {
-    // 気象庁公式予報API（岡山県 330000）
     const res  = await fetch('https://www.jma.go.jp/bosai/forecast/data/forecast/330000.json');
     const data = await res.json();
 
-    const days  = ['日','月','火','水','木','金','土'];
-    const today = new Date().toISOString().slice(0, 10);
+    const days     = ['日','月','火','水','木','金','土'];
+    const todayStr = new Date().toISOString().slice(0, 10);
 
-    // 週間予報（data[1]）: 7日分の天気コード・気温
-    const wts0    = data[1].timeSeries[0]; // 天気コード
-    const wts1    = data[1].timeSeries[1]; // 最高・最低気温
-    const wDates  = wts0.timeDefines.map(t => t.slice(0, 10));
-    const wCodes  = wts0.areas[0].weatherCodes;
-    const wTemps  = wts1.areas[0];
-    const wTmax   = wTemps.tempsMax  || [];
-    const wTmin   = wTemps.tempsMin  || [];
+    // ── 短期予報 (data[0]) ──
+    const stWeather = data[0].timeSeries[0]; // 天気コード（今日・明日・明後日）
+    const stPop     = data[0].timeSeries[1]; // 降水確率（6h）
+    const stTemp    = data[0].timeSeries[2]; // 気温
 
-    // 短期予報（data[0]）: 今日・明日の降水確率・気温を補完
-    const stPop   = data[0].timeSeries[1];  // 降水確率 (6h 区切り)
-    const stTemp  = data[0].timeSeries[2];  // 気温
-    // 今日・明日の日付
-    const stPopDates = stPop.timeDefines.map(t => t.slice(0, 10));
-    // 日付ごとの最大降水確率
+    // 降水確率 → 日付ごと最大値
     const popByDate = {};
     stPop.timeDefines.forEach((t, i) => {
       const d = t.slice(0, 10);
       const v = parseInt(stPop.areas[0].pops[i], 10);
       if (!isNaN(v)) popByDate[d] = Math.max(popByDate[d] ?? 0, v);
     });
-    // 今日の最高気温（短期から補完）
-    const todayTmax = stTemp.areas[0].temps[0] || stTemp.areas[0].temps[1] || '';
 
-    const cards = wDates.map((dateStr, i) => {
+    // 短期気温マップ（日付 → {max, min}）
+    const stTempMap = {};
+    stTemp.timeDefines.forEach((t, i) => {
+      const d  = t.slice(0, 10);
+      const hr = parseInt(t.slice(11, 13));
+      if (!stTempMap[d]) stTempMap[d] = {};
+      const v  = stTemp.areas[0].temps[i];
+      if (hr < 9)       stTempMap[d].min = stTempMap[d].min || v;
+      else if (hr >= 12) stTempMap[d].max = stTempMap[d].max || v;
+      else               stTempMap[d].max = stTempMap[d].max || v; // 9時はmax扱い
+    });
+
+    // 短期天気コードマップ
+    const stWeatherMap = {};
+    stWeather.timeDefines.forEach((t, i) => {
+      stWeatherMap[t.slice(0, 10)] = stWeather.areas[0].weatherCodes[i];
+    });
+
+    // ── 週間予報 (data[1]) ──
+    const wts0   = data[1].timeSeries[0];
+    const wts1   = data[1].timeSeries[1];
+    const wDates = wts0.timeDefines.map(t => t.slice(0, 10));
+    const wCodes = wts0.areas[0].weatherCodes;
+    const wTmax  = wts1.areas[0].tempsMax || [];
+    const wTmin  = wts1.areas[0].tempsMin || [];
+
+    // 今日 + 週間（重複除去）
+    const allDates = [todayStr, ...wDates.filter(d => d !== todayStr)];
+
+    const cards = allDates.map(dateStr => {
       const dt      = new Date(dateStr + 'T00:00:00');
       const dow     = days[dt.getDay()];
       const md      = `${dt.getMonth()+1}/${dt.getDate()}`;
-      const isToday = dateStr === today;
-      const {icon, label} = jmaCodeToEmoji(wCodes[i]);
-      const tmax    = (i === 0 && !wTmax[0]) ? todayTmax : (wTmax[i] || '―');
-      const tmin    = wTmin[i] || '―';
-      const pop     = popByDate[dateStr] !== undefined ? popByDate[dateStr] + '%' : '―';
+      const isToday = dateStr === todayStr;
+      const wIdx    = wDates.indexOf(dateStr);
+
+      // 天気コード（短期優先）
+      const code = stWeatherMap[dateStr] || (wIdx >= 0 ? wCodes[wIdx] : '100');
+      const {icon, label} = jmaCodeToEmoji(code || '100');
+
+      // 気温（短期優先、なければ週間）
+      const tmax = stTempMap[dateStr]?.max || (wIdx >= 0 && wTmax[wIdx] ? wTmax[wIdx] : '');
+      const tmin = stTempMap[dateStr]?.min || (wIdx >= 0 && wTmin[wIdx] ? wTmin[wIdx] : '');
+
+      const pop  = popByDate[dateStr] !== undefined ? popByDate[dateStr] + '%' : '―';
 
       return `<div class="wday-card${isToday?' today':''}">
         <div class="wday-lbl">${isToday?'今日':dow}<br><span style="font-size:.6rem">${md}</span></div>
         <div class="wday-icon" title="${label}">${icon}</div>
         <div class="wday-temps">
-          <span class="wday-max">${tmax}°</span>
+          <span class="wday-max">${tmax ? tmax+'°' : '―'}</span>
           <span style="color:var(--text-lt)"> / </span>
-          <span class="wday-min">${tmin !== '―' ? tmin+'°' : '―'}</span>
+          <span class="wday-min">${tmin ? tmin+'°' : '―'}</span>
         </div>
         <div class="wday-rain">☂️${pop}</div>
       </div>`;
