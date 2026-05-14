@@ -1369,6 +1369,39 @@ function openRecordForm() {
   if (lbl) lbl.textContent = '📝 作業記録を追加';
   document.getElementById('recFormOverlay').classList.add('open');
 }
+function editRecordByIndex(idx) {
+  const r = CURRENT_LOG_LIST[idx];
+  if (!r) return;
+  if (r.id) {
+    editRecord(r.id); // ローカル記録はそのまま編集
+  } else {
+    // シート由来の記録はフォームにコピーして新規保存
+    editingId = null;
+    document.getElementById('recForm').reset();
+    const norm = d => {
+      const s = String(d);
+      if (s.startsWith('Date(')) {
+        const p = s.slice(5,-1).split(',');
+        return `${p[0]}-${String(+p[1]+1).padStart(2,'0')}-${String(+p[2]).padStart(2,'0')}`;
+      }
+      return s.replace(/\//g,'-');
+    };
+    document.getElementById('fDate').value = norm(r.date);
+    resetPersonFields();
+    document.getElementById('houseEntries').innerHTML = '';
+    houseEntryCount = 0;
+    addHouseEntry();
+    document.getElementById('recFormOverlay').classList.add('open');
+    document.getElementById('recFormTitle').textContent = '📋 記録を修正（新規保存）';
+    // place情報をセット
+    if (r.place) {
+      const chips = document.querySelectorAll('#hchips_1 .house-chip');
+      const places = r.place.split('・');
+      chips.forEach(c => { if (places.includes(c.dataset.house)) c.classList.add('active'); });
+    }
+  }
+}
+
 function editRecord(recId) {
   const local = JSON.parse(localStorage.getItem('farm_work_log') || '[]');
   const rec = local.find(r => r.id === recId);
@@ -1780,6 +1813,7 @@ async function submitRecord(e) {
 const SHEET_ID  = '13XoTk1MvPV8IxowC0J81Ao4YlQkhJ4HGWnguiXWS1ns';
 const FORM_URL  = ''; // Googleフォームが届いたらここに入れる
 let   LOG_ROWS  = []; // 全レコード
+let   CURRENT_LOG_LIST = []; // 表示中リスト（index参照用）
 let   LOG_FILTER= 'all';
 
 // Googleシートからデータ読み込み
@@ -1852,12 +1886,13 @@ function renderLog() {
     return;
   }
 
-  // ローカルに存在するIDセット（編集・削除ボタン表示判定用）
+  // 全リストを保存（index参照用）
+  CURRENT_LOG_LIST = list;
   const localIds = new Set(JSON.parse(localStorage.getItem('farm_work_log')||'[]').map(r=>r.id));
 
-  document.getElementById('recList').innerHTML = list.map(r => {
+  document.getElementById('recList').innerHTML = list.map((r, index) => {
     const isDone = r.status?.includes('完了');
-    const isLocal = r.id && localIds.has(r.id);
+    const isLocal = localIds.has(r.id);
     let dispDate = r.date;
     try {
       if (String(r.date).startsWith('Date(')) {
@@ -1921,10 +1956,10 @@ function renderLog() {
         <span class="rec-chevron">▼</span>
       </div>
       <div class="rec-body">
-        ${r.id ? `<div style="display:flex;gap:.4rem;margin-bottom:.55rem;">
-          <button class="rec-edit-btn" onclick="event.stopPropagation();editRecord(${r.id})">✏️ 編集</button>
-          <button class="rec-del-btn" onclick="event.stopPropagation();deleteRecord(${r.id})">🗑️ 削除</button>
-        </div>` : ''}
+        <div style="display:flex;gap:.4rem;margin-bottom:.55rem;">
+          <button class="rec-edit-btn" onclick="event.stopPropagation();editRecordByIndex(${index})">✏️ 編集</button>
+          ${localIds.has(r.id) ? `<button class="rec-del-btn" onclick="event.stopPropagation();deleteRecord(${r.id})">🗑️ 削除</button>` : ''}
+        </div>
         ${housesHtml}
       </div>
     </div>`;
