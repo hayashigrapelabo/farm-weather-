@@ -2187,12 +2187,6 @@ async function loadWeeklyForecast() {
       else        { stTempMap[d].max = stTempMap[d].max ?? v; }
     });
 
-    // 週間気温マップ（日付 → {max, min}）
-    const weeklyTempMap = {};
-    wDates.forEach((d, i) => {
-      weeklyTempMap[d] = { max: wTmax[i] || '', min: wTmin[i] || '' };
-    });
-
     // 短期天気コードマップ
     const stWeatherMap = {};
     stWeather.timeDefines.forEach((t, i) => {
@@ -2206,6 +2200,12 @@ async function loadWeeklyForecast() {
     const wCodes = wts0.areas[0].weatherCodes;
     const wTmax  = wts1.areas[0].tempsMax || [];
     const wTmin  = wts1.areas[0].tempsMin || [];
+
+    // 週間気温マップ（日付 → {max, min}）※wDates定義後に作成
+    const weeklyTempMap = {};
+    wDates.forEach((d, i) => {
+      weeklyTempMap[d] = { max: wTmax[i] || '', min: wTmin[i] || '' };
+    });
 
     // 今日 + 週間（重複除去）
     const allDates = [todayStr, ...wDates.filter(d => d !== todayStr)];
