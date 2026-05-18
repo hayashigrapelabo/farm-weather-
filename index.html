@@ -1375,7 +1375,7 @@ function editRecordByIndex(idx) {
   if (r.id) {
     editRecord(r.id); // ローカル記録はそのまま編集
   } else {
-    // シート由来の記録はフォームにコピーして新規保存
+    // シート由来の記録: 全フィールドをフォームに読み込んで新規保存
     editingId = null;
     document.getElementById('recForm').reset();
     const norm = d => {
@@ -1388,17 +1388,79 @@ function editRecordByIndex(idx) {
     };
     document.getElementById('fDate').value = norm(r.date);
     resetPersonFields();
+
+    // バイト（シートの worker 列 = バイト欄）
+    if (r.worker) {
+      r.worker.split('・').forEach(name => {
+        if (!name) return;
+        const chips = document.querySelectorAll('#parttimeChips .person-chip');
+        let matched = false;
+        chips.forEach(c => {
+          if (c.textContent.trim() === name) { toggleParttime(name, c); matched = true; }
+        });
+        if (!matched) {
+          const otherChip = document.querySelector('#parttimeChips .person-chip:last-child');
+          toggleParttime('__other__', otherChip);
+          document.getElementById('fParttimeOther').value = name;
+          updateParttimeValue();
+        }
+      });
+    }
+
     document.getElementById('houseEntries').innerHTML = '';
     houseEntryCount = 0;
     addHouseEntry();
-    document.getElementById('recFormOverlay').classList.add('open');
-    document.getElementById('recFormTitle').textContent = '📋 記録を修正（新規保存）';
-    // place情報をセット
+    const eid = houseEntryCount;
+
+    // ハウスチップ選択
     if (r.place) {
-      const chips = document.querySelectorAll('#hchips_1 .house-chip');
+      const chips = document.querySelectorAll(`#hchips_${eid} .house-chip`);
       const places = r.place.split('・');
       chips.forEach(c => { if (places.includes(c.dataset.house)) c.classList.add('active'); });
     }
+
+    // 生育ステージ（condition の [stage] プレフィックスから抽出）
+    let condText = r.condition || '';
+    const stageMatch = condText.match(/^\[([^\]]+)\]\s*/);
+    if (stageMatch) {
+      const stageLabel = stageMatch[1];
+      condText = condText.slice(stageMatch[0].length);
+      const sc = Array.from(document.querySelectorAll(`#hstage_chips_${eid} .stage-chip`))
+                      .find(c => c.dataset.stage === stageLabel);
+      if (sc) selectStage(sc, eid);
+    }
+    const condEl = document.getElementById(`hcond_${eid}`);
+    if (condEl) condEl.value = condText;
+
+    // 作業内容のパース（"防除(農薬名)・誘引" → チェック）
+    if (r.work) {
+      r.work.split('・').map(w => w.trim()).filter(Boolean).forEach(item => {
+        const m = item.match(/^(.+?)\((.+)\)$/) || [null, item, ''];
+        const typeName = m[1], detail = m[2] || '';
+        const wt = WORK_TYPES.find(x => x.label === typeName);
+        if (!wt) return;
+        const lbl = document.querySelector(`#wchk_${eid}_${wt.key} .wchk-label`);
+        if (lbl) {
+          lbl.classList.add('checked');
+          lbl.querySelector('input[type=checkbox]').checked = true;
+          if (detail && wt.sub) {
+            const sub = document.getElementById(`wsub_${eid}_${wt.key}`);
+            const val = document.getElementById(`wval_${eid}_${wt.key}`);
+            if (sub) sub.classList.add('show');
+            if (val) val.value = detail;
+          }
+        }
+      });
+    }
+
+    // 作業状況・次回
+    selectHouseStatus(eid, r.status || '完了');
+    const nextEl = document.getElementById(`hnext_${eid}`);
+    if (nextEl) nextEl.value = r.next || '';
+
+    const lbl = document.querySelector('#recFormOverlay .card-lbl');
+    if (lbl) lbl.textContent = '📋 記録を修正（新規保存）';
+    document.getElementById('recFormOverlay').classList.add('open');
   }
 }
 
@@ -2095,7 +2157,9 @@ async function loadWeeklyForecast() {
     const data = await res.json();
 
     const days     = ['日','月','火','水','木','金','土'];
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // toISOString()はUTCのため日本時間(JST=UTC+9)でローカル日付を取得
+    const _now     = new Date();
+    const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`;
 
     // ── 短期予報 (data[0]) ──
     const stWeather = data[0].timeSeries[0]; // 天気コード（今日・明日・明後日）
@@ -2111,15 +2175,22 @@ async function loadWeeklyForecast() {
     });
 
     // 短期気温マップ（日付 → {max, min}）
+    // data[0].timeSeries[2]: 時刻が0時台→最低気温、それ以外→最高気温
     const stTempMap = {};
     stTemp.timeDefines.forEach((t, i) => {
       const d  = t.slice(0, 10);
       const hr = parseInt(t.slice(11, 13));
-      if (!stTempMap[d]) stTempMap[d] = {};
       const v  = stTemp.areas[0].temps[i];
-      if (hr < 9)       stTempMap[d].min = stTempMap[d].min || v;
-      else if (hr >= 12) stTempMap[d].max = stTempMap[d].max || v;
-      else               stTempMap[d].max = stTempMap[d].max || v; // 9時はmax扱い
+      if (!v && v !== 0) return; // 空値はスキップ
+      if (!stTempMap[d]) stTempMap[d] = {};
+      if (hr < 6) { stTempMap[d].min = stTempMap[d].min ?? v; }
+      else        { stTempMap[d].max = stTempMap[d].max ?? v; }
+    });
+
+    // 週間気温マップ（日付 → {max, min}）
+    const weeklyTempMap = {};
+    wDates.forEach((d, i) => {
+      weeklyTempMap[d] = { max: wTmax[i] || '', min: wTmin[i] || '' };
     });
 
     // 短期天気コードマップ
@@ -2151,8 +2222,8 @@ async function loadWeeklyForecast() {
       const {icon, label} = jmaCodeToEmoji(code || '100');
 
       // 気温（短期優先、なければ週間）
-      const tmax = stTempMap[dateStr]?.max || (wIdx >= 0 && wTmax[wIdx] ? wTmax[wIdx] : '');
-      const tmin = stTempMap[dateStr]?.min || (wIdx >= 0 && wTmin[wIdx] ? wTmin[wIdx] : '');
+      const tmax = stTempMap[dateStr]?.max || weeklyTempMap[dateStr]?.max || '';
+      const tmin = stTempMap[dateStr]?.min || weeklyTempMap[dateStr]?.min || '';
 
       const pop  = popByDate[dateStr] !== undefined ? popByDate[dateStr] + '%' : '―';
 
