@@ -304,6 +304,20 @@
                  flex-shrink:0;}
     .rec-del-btn:active{background:#ffebee;}
     /* 追加ボタン */
+    /* ── 畑マップ ── */
+    .map-house{cursor:pointer;}
+    .map-house:active rect{opacity:.7;}
+    .map-legend{display:flex;flex-wrap:wrap;gap:.3rem;margin:.4rem 0 .6rem;}
+    .map-leg-item{display:flex;align-items:center;gap:.2rem;font-size:.62rem;color:var(--text-md);}
+    .map-leg-dot{width:11px;height:11px;border-radius:3px;flex-shrink:0;}
+    .map-popup-bd{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:299;display:none;}
+    .map-popup-bd.open{display:block;}
+    .map-popup{position:fixed;bottom:0;left:0;right:0;max-height:70vh;overflow-y:auto;
+               background:var(--card);border-radius:16px 16px 0 0;padding:1rem 1rem 1.5rem;
+               box-shadow:0 -4px 24px rgba(0,0,0,.18);transform:translateY(100%);
+               transition:transform .25s;z-index:300;}
+    .map-popup.open{transform:translateY(0);}
+    /* ── 追加ボタン ── */
     .add-house-btn{width:100%;border:2px dashed var(--grape);background:rgba(106,27,154,.04);
                    color:var(--grape);border-radius:12px;padding:.6rem;font-size:.85rem;
                    font-weight:700;cursor:pointer;margin-bottom:.7rem;}
@@ -468,6 +482,7 @@
       <button class="tab-btn"        onclick="switchTab('soil',this)">🌱 地温</button>
       <button class="tab-btn"        onclick="switchTab('frost',this)">❄️ 霜日数</button>
       <button class="tab-btn"        onclick="switchTab('log',this)">📝 作業記録</button>
+      <button class="tab-btn"        onclick="switchTab('map',this)">🗺️ マップ</button>
     </div>
   </div>
 
@@ -587,7 +602,29 @@
     </div>
   </div>
 
+  <!-- ═══ 畑マップタブ ═══ -->
+  <div id="pane-map" class="tab-pane" style="display:none">
+    <div class="sec-title">🗺️ はたけマップ</div>
+    <div class="card" style="padding:.7rem;">
+      <div class="map-legend" id="mapLegend"></div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <svg id="farmSvg" viewBox="0 0 585 355" style="width:100%;min-width:300px;height:auto;display:block;"></svg>
+      </div>
+      <div style="font-size:.65rem;color:var(--text-lt);text-align:center;margin-top:.4rem;">タップで作業履歴を表示</div>
+    </div>
+  </div>
+
 </div><!-- /mainContent -->
+
+<!-- ═══ マップ ポップアップ ═══ -->
+<div class="map-popup-bd" id="mapBd" onclick="closeMapPopup()"></div>
+<div class="map-popup" id="mapPopup">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.7rem;">
+    <div style="font-weight:800;font-size:1rem;" id="mapPopupTitle"></div>
+    <button onclick="closeMapPopup()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-lt);">✕</button>
+  </div>
+  <div id="mapPopupContent"></div>
+</div>
 
 <footer>
   📡 気象データ：Open-Meteo API（ERA5気候再解析データ）を使用。座標ベースで取得しているため特定の観測所に依存しません。<br>
@@ -2066,6 +2103,7 @@ function switchTab(tab, btn) {
   currentTab = tab;
   document.getElementById('compBar').style.display = CHART_TABS.has(tab)?'flex':'none';
   if(MD) RENDERERS[tab]?.();
+  if(tab === 'map') renderFarmMap();
 }
 
 function toggleComp(key, btn) {
@@ -2149,6 +2187,203 @@ function jmaCodeToEmoji(code) {
   if (c === 408 || c === 450) return {icon:'⛈️', label:'雪で雷'};
   if (c >= 401 && c <= 499) return {icon:'❄️', label:'雪'};
   return {icon:'🌡️', label:''};
+}
+
+// ══════════════════════════════════════════════════
+//  🗺️ 畑マップ
+// ══════════════════════════════════════════════════
+const MAP_HOUSES = [
+  { id:'加温室1',  label:'加温①', x:58,  y:148, w:90,  h:52,  varieties:'MJ/MO',   heated:true },
+  { id:'加温室2',  label:'加温②', x:36,  y:213, w:122, h:95,  varieties:'MJ/GF他', heated:true },
+  { id:'冷室1',   label:'①',     x:184, y:128, w:74,  h:40,  varieties:'SM300'  },
+  { id:'冷室2',   label:'②',     x:184, y:173, w:74,  h:40,  varieties:'SM/MJ'  },
+  { id:'冷室3',   label:'③',     x:263, y:128, w:95,  h:40,  varieties:'SM/MJ'  },
+  { id:'冷室4',   label:'④',     x:263, y:173, w:95,  h:40,  varieties:'MJ/MA'  },
+  { id:'冷室5',   label:'⑤',     x:184, y:222, w:145, h:58,  varieties:'CM520'  },
+  { id:'冷室6',   label:'⑥',     x:194, y:295, w:108, h:42,  varieties:'BT/SE'  },
+  { id:'冷室7',   label:'⑦',     x:368, y:148, w:60,  h:90,  varieties:'SG/MJ'  },
+  { id:'冷室8',   label:'⑧',     x:435, y:148, w:60,  h:90,  varieties:'SM/MJ'  },
+  { id:'冷室9',   label:'⑨',     x:362, y:103, w:100, h:38,  varieties:'MJ'     },
+  { id:'冷室10',  label:'⑩',     x:517, y:80,  w:52,  h:95,  varieties:'SM/MJ'  },
+  { id:'冷室11',  label:'⑪',     x:458, y:93,  w:52,  h:55,  varieties:'a'      },
+  { id:'冷室12',  label:'⑫',     x:447, y:5,   w:123, h:30,  varieties:'MA/MJ'  },
+  { id:'冷室13',  label:'⑬',     x:447, y:40,  w:123, h:30,  varieties:'BT/LM'  },
+];
+
+const MAP_STAGE_COLORS = {
+  '💤 休眠':  { bg:'#cfd8dc', bd:'#90a4ae', tx:'#546e7a' },
+  '🌱 萌芽':  { bg:'#dcedc8', bd:'#aed581', tx:'#558b2f' },
+  '🍃 展葉':  { bg:'#a5d6a7', bd:'#66bb6a', tx:'#2e7d32' },
+  '🌸 開花':  { bg:'#f8bbd9', bd:'#f48fb1', tx:'#c2185b' },
+  '🫐 結実':  { bg:'#e1bee7', bd:'#ce93d8', tx:'#7b1fa2' },
+  '🍇 幼果':  { bg:'#b2ebf2', bd:'#4dd0e1', tx:'#006064' },
+  '📈 硬核期':{ bg:'#fff9c4', bd:'#fff176', tx:'#f57f17' },
+  '🎨 柔化期':{ bg:'#e1bee7', bd:'#9575cd', tx:'#4a148c' },
+  '🧺 収穫':  { bg:'#ccff90', bd:'#aed581', tx:'#33691e' },
+  '🍂 収穫後':{ bg:'#d7ccc8', bd:'#a1887f', tx:'#4e342e' },
+  '':         { bg:'#eef2ee', bd:'#b0bec5', tx:'#78909c' },
+};
+
+function renderFarmMap() {
+  const svg = document.getElementById('farmSvg');
+  if (!svg) return;
+  const ns = 'http://www.w3.org/2000/svg';
+
+  // 最新記録をハウスごとに集計
+  const allRecs = JSON.parse(localStorage.getItem('farm_work_log') || '[]');
+  const stageByHouse = {}, dateByHouse = {};
+  [...allRecs].sort((a,b)=>a.date<b.date?-1:1).forEach(rec => {
+    (rec.houses||[]).forEach(h => {
+      const places = h.places?.length ? h.places : (h.place ? [h.place] : []);
+      places.forEach(p => {
+        if (h.stage) stageByHouse[p] = h.stage;
+        if (rec.date) dateByHouse[p] = rec.date;
+      });
+    });
+  });
+
+  svg.innerHTML = '';
+
+  // 背景
+  const bgRect = document.createElementNS(ns,'rect');
+  bgRect.setAttribute('width','585'); bgRect.setAttribute('height','355');
+  bgRect.setAttribute('fill','#f4f7f4'); bgRect.setAttribute('rx','10');
+  svg.appendChild(bgRect);
+
+  // ラベル（非インタラクティブエリア）
+  [['研究',307,320],['ピンクH.',10,338],['事務所',62,338]].forEach(([t,x,y])=>{
+    const el = document.createElementNS(ns,'text');
+    el.setAttribute('x',x); el.setAttribute('y',y);
+    el.setAttribute('font-size','8'); el.setAttribute('fill','#aaa');
+    el.setAttribute('font-family','sans-serif');
+    el.textContent = t; svg.appendChild(el);
+  });
+
+  MAP_HOUSES.forEach(h => {
+    const stage = stageByHouse[h.id] || '';
+    const col   = MAP_STAGE_COLORS[stage] || MAP_STAGE_COLORS[''];
+    const lastDate = dateByHouse[h.id];
+    const g = document.createElementNS(ns,'g');
+    g.setAttribute('class','map-house');
+    g.setAttribute('onclick',`mapSelectHouse('${h.id}')`);
+
+    // 外枠
+    const rect = document.createElementNS(ns,'rect');
+    rect.setAttribute('x',h.x); rect.setAttribute('y',h.y);
+    rect.setAttribute('width',h.w); rect.setAttribute('height',h.h);
+    rect.setAttribute('rx','5'); rect.setAttribute('fill',col.bg);
+    rect.setAttribute('stroke', h.heated ? '#ef5350' : col.bd);
+    rect.setAttribute('stroke-width', h.heated ? '2.5' : '1.5');
+    g.appendChild(rect);
+
+    // ハウス番号ラベル
+    const cx = h.x + h.w/2, cy = h.y + h.h/2;
+    const lbl = document.createElementNS(ns,'text');
+    lbl.setAttribute('x', cx);
+    lbl.setAttribute('y', h.h <= 35 ? cy+5 : h.y+16);
+    lbl.setAttribute('text-anchor','middle');
+    lbl.setAttribute('font-size', h.heated ? '11' : '13');
+    lbl.setAttribute('font-weight','bold');
+    lbl.setAttribute('fill', col.tx);
+    lbl.setAttribute('font-family','sans-serif');
+    lbl.textContent = h.label;
+    g.appendChild(lbl);
+
+    // 品種（加温のみ・スペースがある場合）
+    if (h.heated && h.h >= 50) {
+      const vt = document.createElementNS(ns,'text');
+      vt.setAttribute('x',cx); vt.setAttribute('y',h.y+29);
+      vt.setAttribute('text-anchor','middle');
+      vt.setAttribute('font-size','8'); vt.setAttribute('fill',col.tx);
+      vt.setAttribute('font-family','sans-serif');
+      vt.textContent = h.varieties;
+      g.appendChild(vt);
+    }
+
+    // 生育ステージ（スペースがある場合）
+    if (stage && h.h >= 52) {
+      const stageLbl = stage.replace(/\p{Emoji}/gu,'').trim().slice(0,5);
+      const st = document.createElementNS(ns,'text');
+      st.setAttribute('x',cx); st.setAttribute('y',h.heated ? h.y+43 : h.y+30);
+      st.setAttribute('text-anchor','middle');
+      st.setAttribute('font-size','8'); st.setAttribute('fill',col.tx);
+      st.setAttribute('font-family','sans-serif');
+      st.textContent = stageLbl;
+      g.appendChild(st);
+    }
+
+    // 最終作業日
+    if (lastDate && h.h >= 42) {
+      const ago = Math.floor((new Date()-new Date(lastDate))/86400000);
+      const agoTxt = ago === 0 ? '今日' : ago === 1 ? '昨日' : `${ago}日前`;
+      const dt = document.createElementNS(ns,'text');
+      dt.setAttribute('x',cx); dt.setAttribute('y',h.y+h.h-5);
+      dt.setAttribute('text-anchor','middle');
+      dt.setAttribute('font-size','7'); dt.setAttribute('fill',col.tx);
+      dt.setAttribute('opacity','0.75'); dt.setAttribute('font-family','sans-serif');
+      dt.textContent = agoTxt;
+      g.appendChild(dt);
+    }
+
+    svg.appendChild(g);
+  });
+
+  // 凡例を更新
+  const legendEl = document.getElementById('mapLegend');
+  if (legendEl) {
+    legendEl.innerHTML = Object.entries(MAP_STAGE_COLORS)
+      .filter(([k])=>k!=='')
+      .map(([k,v])=>`<div class="map-leg-item">
+        <div class="map-leg-dot" style="background:${v.bg};border:1.5px solid ${v.bd};"></div>
+        <span>${k}</span></div>`).join('') +
+      `<div class="map-leg-item">
+        <div class="map-leg-dot" style="background:#eef2ee;border:1.5px solid #b0bec5;"></div>
+        <span>未記録</span></div>`;
+  }
+}
+
+function mapSelectHouse(houseId) {
+  const h = MAP_HOUSES.find(m=>m.id===houseId);
+  const allRecs = JSON.parse(localStorage.getItem('farm_work_log')||'[]');
+  const houseRecs = allRecs.filter(rec=>{
+    return (rec.houses||[]).some(hh=>{
+      const places = hh.places?.length ? hh.places : (hh.place?[hh.place]:[]);
+      return places.includes(houseId);
+    });
+  }).sort((a,b)=>a.date>b.date?-1:1).slice(0,5);
+
+  document.getElementById('mapPopupTitle').textContent =
+    `${h?.label||houseId}（${houseId}）${h?.varieties ? ' — '+h.varieties : ''}`;
+
+  const content = document.getElementById('mapPopupContent');
+  if (!houseRecs.length) {
+    content.innerHTML = '<div style="color:var(--text-lt);font-size:.85rem;padding:.5rem 0;">まだ記録がありません</div>';
+  } else {
+    content.innerHTML = houseRecs.map(rec=>{
+      const hEntry = (rec.houses||[]).find(hh=>{
+        const places = hh.places?.length ? hh.places : (hh.place?[hh.place]:[]);
+        return places.includes(houseId);
+      });
+      const works = (hEntry?.works||[]).map(w=>w.detail?`${w.type}(${w.detail})`:w.type).join('・')||'—';
+      return `<div style="border-bottom:1px solid var(--bdr);padding:.55rem 0;font-size:.82rem;">
+        <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;">
+          <span style="font-weight:700;color:var(--text-dk);">${rec.date}</span>
+          ${hEntry?.stage?`<span style="background:rgba(45,106,79,.1);color:var(--green-dk);border-radius:8px;padding:.1rem .4rem;font-size:.7rem;">${hEntry.stage}</span>`:''}
+        </div>
+        <div style="color:var(--text-md);margin-top:.2rem;">🔧 ${works}</div>
+        <div style="color:var(--text-lt);font-size:.72rem;margin-top:.1rem;">👤 ${rec.worker||''}${rec.parttime?' / バイト:'+rec.parttime:''}</div>
+        ${hEntry?.condition?`<div style="color:var(--text-lt);font-size:.72rem;">🌿 ${hEntry.condition}</div>`:''}
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('mapBd').classList.add('open');
+  document.getElementById('mapPopup').classList.add('open');
+}
+
+function closeMapPopup() {
+  document.getElementById('mapBd').classList.remove('open');
+  document.getElementById('mapPopup').classList.remove('open');
 }
 
 async function loadWeeklyForecast() {
