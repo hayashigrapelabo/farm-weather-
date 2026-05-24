@@ -2456,9 +2456,13 @@ async function loadWeeklyForecast() {
       const code = stWeatherMap[dateStr] || (wIdx >= 0 ? wCodes[wIdx] : '100');
       const {icon, label} = jmaCodeToEmoji(code || '100');
 
-      // 気温（短期優先、なければ週間）
-      const tmax = stTempMap[dateStr]?.max || weeklyTempMap[dateStr]?.max || '';
-      const tmin = stTempMap[dateStr]?.min || weeklyTempMap[dateStr]?.min || '';
+      // 気温（短期優先、なければ週間、今日はTD実測値も使用）
+      let tmax = stTempMap[dateStr]?.max || weeklyTempMap[dateStr]?.max || '';
+      let tmin = stTempMap[dateStr]?.min || weeklyTempMap[dateStr]?.min || '';
+      if (isToday && TD) {
+        if (!tmax && TD.maxT != null) tmax = String(Math.round(TD.maxT));
+        if (!tmin && TD.minT != null) tmin = String(Math.round(TD.minT));
+      }
 
       const pop  = popByDate[dateStr] !== undefined ? popByDate[dateStr] + '%' : '―';
 
