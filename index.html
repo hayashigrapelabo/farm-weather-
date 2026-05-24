@@ -2302,7 +2302,7 @@ function renderFarmMap() {
 
     // 生育ステージ（スペースがある場合）
     if (stage && h.h >= 52) {
-      const stageLbl = stage.replace(/\p{Emoji}/gu,'').trim().slice(0,5);
+      const stageLbl = stage.replace(/[^\u0020-\u007e\u3000-\u9FFF]/g,'').trim().slice(0,5);
       const st = document.createElementNS(ns,'text');
       st.setAttribute('x',cx); st.setAttribute('y',h.heated ? h.y+43 : h.y+30);
       st.setAttribute('text-anchor','middle');
